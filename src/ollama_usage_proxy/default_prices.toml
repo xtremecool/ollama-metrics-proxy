@@ -1,0 +1,29 @@
+[[paid_models]]
+name = "claude-sonnet-4-20250514"
+currency = "USD"
+input_per_million = 3.00
+output_per_million = 15.00
+
+[[paid_models]]
+name = "claude-opus-4-20250514"
+currency = "USD"
+input_per_million = 15.00
+output_per_million = 75.00
+
+[[paid_models]]
+name = "gpt-4.1"
+currency = "USD"
+input_per_million = 2.00
+output_per_million = 10.00
+
+[[paid_models]]
+name = "gpt-4.1-mini"
+currency = "USD"
+input_per_million = 0.40
+output_per_million = 1.60
+
+[[paid_models]]
+name = "o3-pro"
+currency = "USD"
+input_per_million = 10.00
+output_per_million = 40.00

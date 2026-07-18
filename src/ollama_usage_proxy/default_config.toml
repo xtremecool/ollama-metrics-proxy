@@ -1,0 +1,10 @@
+[proxy]
+listen_host = "127.0.0.1"
+listen_port = 11435
+ollama_base_url = "http://127.0.0.1:11434"
+
+[database]
+path = "~/.local/share/ollama-usage-proxy/usage.db"
+
+[reporting]
+output_dir = "~/.local/share/ollama-usage-proxy/reports"
