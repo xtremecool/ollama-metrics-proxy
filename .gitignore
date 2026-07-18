@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.eggs/
+
+# Virtual environment
+.venv/
+venv/
+
+# Packaging
+dist/
+build/
+*.so
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Linting/Type checking
+.mypy_cache/
+.ruff_cache/
+
+# Environment & local config
+.env
+config.toml
+prices.toml
+
+# Database files
+usage.db
+usage.db-shm
+usage.db-wal
+data/*.db
+
+# Generated reports
+reports/*.png
+reports/*.csv
+reports/*.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
