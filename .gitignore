@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.eggs/
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Packaging
+dist/
+build/
+*.so
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Linting/Type checking
+.mypy_cache/
+.ruff_cache/
+
+# Environment & local config (secrets)
+.env
+.env.*
+config.toml
+prices.toml
+*.local.toml
+
+# Private keys and SSL certificates
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Database files (local SQLite metadata & write-ahead logs)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Generated reports (ignores all generated contents but keeps the directory in git)
+reports/*
+!reports/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
