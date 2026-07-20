@@ -1,6 +1,6 @@
 [project]
 name = "ollama-usage-proxy"
-version = "0.3.1"
+version = "0.3.2"
 description = "A local HTTP proxy for tracking Ollama model usage metrics"
 readme = "README.md"
 requires-python = ">=3.10"
