@@ -9,6 +9,7 @@ __pycache__/
 # Virtual environment
 .venv/
 venv/
+ENV/
 
 # Packaging
 dist/
@@ -24,28 +25,37 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Environment & local config
+# Environment & local config (secrets)
 .env
+.env.*
 config.toml
 prices.toml
+*.local.toml
 
-# Database files
-usage.db
-usage.db-shm
-usage.db-wal
+# Private keys and SSL certificates
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Database files (local SQLite metadata & write-ahead logs)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 data/*.db
 
-# Generated reports
-reports/*.png
-reports/*.csv
-reports/*.md
+# Generated reports (ignores all generated contents but keeps the directory in git)
+reports/*
+!reports/.gitkeep
 
 # OS files
 .DS_Store
 Thumbs.db
 
 # IDE
-.vscode/settings.json
+.vscode/
 .idea/
 *.swp
 *.swo
