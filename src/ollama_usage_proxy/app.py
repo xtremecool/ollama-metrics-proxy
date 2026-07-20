@@ -309,7 +309,7 @@ async def handle_proxy_request(
         await asyncio.to_thread(insert_request, db_path, metrics)
 
         return Response(
-            content=json.dumps({"error": str(e)}),
+            content=json.dumps({"error": "Bad gateway"}),
             status_code=502,
             media_type="application/json",
         )
