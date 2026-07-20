@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 import ollama_usage_proxy.config as _config
+from ollama_usage_proxy import __version__
 import ollama_usage_proxy.db as _db
 import ollama_usage_proxy.usage as _usage
 
@@ -78,7 +79,7 @@ def create_app(config: AppConfig | None = None, config_path: str | Path | None =
     app = FastAPI(
         title="Ollama Usage Proxy",
         description="Transparent proxy for tracking Ollama token usage metrics",
-        version="0.2.0",
+        version=__version__,
         lifespan=lifespan,
     )
 
