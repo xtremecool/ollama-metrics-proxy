@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import logging
 from pathlib import Path
 
@@ -28,8 +27,7 @@ def _get_distinct_colors(n):
         return [cmap(i % 20) for i in range(n)]
     else:
         # Generate evenly spaced colors from HSV color wheel
-        return [matplotlib.colors.hsv_to_hsv(h, 0.85, 0.9) for h in itertools.islice(
-            (i / n for i in range(n)), None)]
+        return [mcolors.hsv_to_rgb((i / n, 0.85, 0.9)) for i in range(n)]
 
 
 def generate_cost_graphs(df, prices, output_path, group_by="day"):
