@@ -1,3 +1,5 @@
 """Ollama Usage Proxy - Track local LLM token usage and compare with paid models."""
 
-__version__ = "0.2.0"
+from importlib.metadata import version as _metadata_version
+
+__version__ = _metadata_version("ollama-usage-proxy")
