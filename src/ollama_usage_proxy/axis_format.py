@@ -50,8 +50,9 @@ def format_xaxis(ax, group_by, data_index=None):
     }
     date_fmt = fmt_map.get(group_by, "%Y-%m-%d")
 
-    # Place ticks exactly at each data point to avoid extra phantom periods
-    if data_index is not None and len(data_index) > 0:
+    # Place ticks exactly at each data point to avoid extra phantom periods.
+    # Only use FixedLocator for small datasets (< 15 points) to prevent label overlap.
+    if data_index is not None and len(data_index) > 0 and len(data_index) <= 15:
         tick_locs = mdates.date2num(data_index.to_pydatetime())
         ax.xaxis.set_major_locator(ticker.FixedLocator(tick_locs))
 

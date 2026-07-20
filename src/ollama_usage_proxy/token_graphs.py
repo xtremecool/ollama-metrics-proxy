@@ -90,19 +90,21 @@ def generate_token_rates_graph(df, output_path, group_by="day"):
     # Convert datetime index to numeric for spline interpolation
     x_num = mdates.date2num(idx.to_pydatetime())
 
-    # Left axis: input tokens/sec (smoothed)
-    x_s, y_s = smooth_line(x_num, df["weighted_input_tps"].values)
+    # Left axis: input tokens/sec (smoothed) — rounded to nearest integer for straighter lines
+    input_tps_rounded = df["weighted_input_tps"].round(0)
+    x_s, y_s = smooth_line(x_num, input_tps_rounded.values)
     ax_left.plot(mdates.num2date(x_s), y_s, label="Weighted input tokens/sec", color="blue")
-    ax_left.scatter(idx, df["weighted_input_tps"], marker="o", s=20, color="blue", zorder=5)
+    ax_left.scatter(idx, input_tps_rounded, marker="o", s=20, color="blue", zorder=5)
     ax_left.set_ylabel("Input Tokens/sec", color="blue")
     ax_left.tick_params(axis='y', labelcolor="blue")
     format_yaxis(ax_left)
 
-    # Right axis: output tokens/sec (smoothed)
+    # Right axis: output tokens/sec (smoothed) — rounded to nearest integer for straighter lines
     ax_right = ax_left.twinx()
-    x_s2, y_s2 = smooth_line(x_num, df["weighted_output_tps"].values)
+    output_tps_rounded = df["weighted_output_tps"].round(0)
+    x_s2, y_s2 = smooth_line(x_num, output_tps_rounded.values)
     ax_right.plot(mdates.num2date(x_s2), y_s2, label="Weighted output tokens/sec", color="red")
-    ax_right.scatter(idx, df["weighted_output_tps"], marker="s", s=20, color="red", zorder=5)
+    ax_right.scatter(idx, output_tps_rounded, marker="s", s=20, color="red", zorder=5)
     ax_right.set_ylabel("Output Tokens/sec", color="red")
     ax_right.tick_params(axis='y', labelcolor="red")
     format_yaxis(ax_right)

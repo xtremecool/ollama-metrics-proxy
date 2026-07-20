@@ -17,6 +17,7 @@ from typing import AsyncIterator
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 import ollama_usage_proxy.config as _config
@@ -47,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     report_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Initialising database at %s", db_path)
-    initialize_schema(str(db_path))
+    await asyncio.to_thread(initialize_schema, str(db_path))
     logger.info(
         "Proxy listening on %s:%d -> %s",
         config.proxy.listen_host,
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     logger.info("Proxy shutting down")
+    await app.state.http_client.aclose()
 
 
 def create_app(config: AppConfig | None = None, config_path: str | Path | None = None) -> FastAPI:
@@ -83,8 +85,18 @@ def create_app(config: AppConfig | None = None, config_path: str | Path | None =
     app.state.config = config
 
     # Create httpx client for forwarding requests
+    # read=None ensures long model load times or slow reasoning do not time out
     app.state.http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(300.0),  # Long timeout for LLM generation
+        timeout=httpx.Timeout(connect=15.0, read=None, write=30.0, pool=10.0),
+    )
+
+    # Enable CORS for browser-based tools and Web interfaces
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
@@ -176,37 +188,70 @@ async def handle_proxy_request(
                 """Read from Ollama, feed collector, yield to client."""
                 nonlocal collector
 
-                async with client.stream(
-                    method=method,
-                    url=target_url,
-                    content=body,
-                    headers=headers,
-                ) as ollama_response:
-                    status_code = ollama_response.status_code
-                    response_headers = dict(ollama_response.headers)
-                    response_headers.pop("Content-Length", None)
+                status_code = 200
+                response_headers: dict[str, str] = {}
+                line_buffer = bytearray()
 
-                    async for chunk in ollama_response.aiter_bytes(chunk_size=None):
-                        if chunk:
-                            for line in chunk.split(b"\n"):
-                                if line:
-                                    await collector.feed_line(line)
-                            yield chunk
+                try:
+                    async with client.stream(
+                        method=method,
+                        url=target_url,
+                        content=body,
+                        headers=headers,
+                    ) as ollama_response:
+                        status_code = ollama_response.status_code
+                        response_headers = dict(ollama_response.headers)
+                        response_headers.pop("Content-Length", None)
 
-                # Persist metrics AFTER the stream completes, but still within
-                # the generator so FastAPI waits for it. Since insert_request
-                # catches all exceptions internally, this is safe and will not
-                # break the response if the DB write fails.
-                metrics = collector.get_metrics(
-                    method=method,
-                    path=f"/{path}",
-                    status_code=status_code,
-                    streaming=True,
-                )
-                if metrics:
-                    insert_request(db_path, metrics)
+                        async for chunk in ollama_response.aiter_bytes(chunk_size=None):
+                            if chunk:
+                                line_buffer.extend(chunk)
+                                while b"\n" in line_buffer:
+                                    line, line_buffer = line_buffer.split(b"\n", 1)
+                                    if line:
+                                        await collector.feed_line(bytes(line))
+                                yield bytes(chunk)
+
+                    # Drain any remaining buffer content after stream ends
+                    if line_buffer:
+                        await collector.feed_line(bytes(line_buffer))
+
+                except asyncio.CancelledError:
+                    logger.warning("Streaming request to %s cancelled by client", path)
+                    metrics = collector.get_metrics(
+                        method=method,
+                        path=f"/{path}",
+                        status_code=status_code,
+                        streaming=True,
+                    )
+                    if metrics:
+                        metrics.error = "Stream disconnected by client"
+                        await asyncio.to_thread(insert_request, db_path, metrics)
+                    raise
+                except Exception as exc:
+                    logger.error("Streaming error for %s: %s", path, exc)
+                    metrics = collector.get_metrics(
+                        method=method,
+                        path=f"/{path}",
+                        status_code=status_code,
+                        streaming=True,
+                    )
+                    if metrics:
+                        metrics.error = f"Stream error: {exc}"
+                        await asyncio.to_thread(insert_request, db_path, metrics)
+                    raise
                 else:
-                    logger.warning("No metrics collected for streaming request to %s", path)
+                    # Persist metrics AFTER the stream completes successfully
+                    metrics = collector.get_metrics(
+                        method=method,
+                        path=f"/{path}",
+                        status_code=status_code,
+                        streaming=True,
+                    )
+                    if metrics:
+                        await asyncio.to_thread(insert_request, db_path, metrics)
+                    else:
+                        logger.warning("No metrics collected for streaming request to %s", path)
 
             return StreamingResponse(
                 streaming_capture(),
@@ -238,7 +283,7 @@ async def handle_proxy_request(
                         status_code=status_code,
                         streaming=False,
                     )
-                    insert_request(db_path, metrics)
+                    await asyncio.to_thread(insert_request, db_path, metrics)
                 except (json.JSONDecodeError, ValueError):
                     logger.warning("Could not parse non-streaming response from %s", path)
 
@@ -260,7 +305,7 @@ async def handle_proxy_request(
             path=f"/{path}",
             error=str(e),
         )
-        insert_request(db_path, metrics)
+        await asyncio.to_thread(insert_request, db_path, metrics)
 
         return Response(
             content=json.dumps({"error": str(e)}),
@@ -337,4 +382,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     main()
