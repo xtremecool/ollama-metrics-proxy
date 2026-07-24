@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-[#090d16] text-slate-200">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ollama Usage Proxy &mdash; Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            neon: { blue: '#38bdf8', green: '#4ade80', purple: '#a78bfa' },
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .chart-container { position: relative; height: 200px; width: 100%; }
+
+    /* ── Status Badge ─────────────────────────────────────────────── */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    /* Idle — muted gray */
+    .badge-idle {
+      background-color: #1e293b;
+      color: #64748b;
+    }
+    .badge-idle .status-dot {
+      background-color: #475569;
+    }
+    /* Thinking — pulsing yellow */
+    .badge-thinking {
+      background-color: #422006;
+      color: #fbbf24;
+    }
+    .badge-thinking .status-dot {
+      background-color: #fbbf24;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    /* Generating — active green pulse */
+    .badge-generating {
+      background-color: #052e16;
+      color: #4ade80;
+    }
+    .badge-generating .status-dot {
+      background-color: #4ade80;
+      animation: pulse 0.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[#090d16] text-slate-200 antialiased"
+      x-data="dashboard()" x-init="init()">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="border-b border-[#1e293b] bg-[#121826]/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <svg class="w-7 h-7 text-neon-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M9 19v-6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2zm0 0V9a2 2 0
+                   0 1 2-2h2a2 2 0 0 1 2 2v10m-7 0h5M15 19v-3a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v3m-5 0h5
+                   M15 19V7a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v12"/>
+        </svg>
+        <h1 class="text-lg font-semibold tracking-tight text-white">Ollama Metrics Dashboard</h1>
+      </div>
+      <div class="flex items-center gap-3 text-xs">
+        <!-- Status badge (idle / thinking / generating) -->
+        <span class="status-badge" :class="statusBadgeClass">
+          <span class="status-dot"></span>
+          <span x-text="statusLabel"></span>
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full"
+              :class="gpuOnline ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'">
+          <span class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                  :class="gpuOnline ? 'bg-emerald-400' : 'bg-amber-400'"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2"
+                  :class="gpuOnline ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+          </span>
+          <span x-text="gpuOnline ? 'GPU Online' : 'System Stats Offline'"></span>
+        </span>
+        <span class="text-slate-500" x-text="wsStatus"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main content ─────────────────────────────────────────────── -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- ── KPI Summary Cards - 6 metrics in responsive grid ──────── -->
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+
+      <!-- 1. GPU Temp -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4 flex flex-col justify-between">
+        <span class="text-xs uppercase tracking-wider text-slate-500">GPU Temp</span>
+        <span class="mt-2 text-3xl font-bold tabular-nums"
+              :class="(current.gpu_temp_c ?? 0) > 80 ? 'text-red-400' : 'text-[#F87171]'"
+              x-text="gpuOnline ? (current.gpu_temp_c != null ? Math.round(current.gpu_temp_c) + '°C' : '--') : '--'"></span>
+        <span class="mt-2 inline-block text-xs px-2 py-0.5 rounded-full bg-[#F87171]/15 text-[#F87171] w-fit"
+              x-text="gpuOnline ? 'Active' : 'Offline'"></span>
+      </div>
+
+      <!-- 2. GPU Power -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4 flex flex-col justify-between">
+        <span class="text-xs uppercase tracking-wider text-slate-500">GPU Power</span>
+        <span class="mt-2 text-3xl font-bold tabular-nums text-[#FBBF24]"
+              x-text="gpuOnline ? (current.gpu_power_w != null ? Math.round(current.gpu_power_w) + 'W' : '--') : '--'"></span>
+        <span class="mt-2 inline-block text-xs px-2 py-0.5 rounded-full bg-[#FBBF24]/15 text-[#FBBF24] w-fit"
+              x-text="gpuOnline ? 'Active' : 'Offline'"></span>
+      </div>
+
+      <!-- 3. GPU Utilization -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4 flex flex-col justify-between">
+        <span class="text-xs uppercase tracking-wider text-slate-500">GPU Util</span>
+        <span class="mt-2 text-3xl font-bold tabular-nums text-[#C084FC]"
+              x-text="gpuOnline ? (current.gpu_util_pct != null ? Math.round(current.gpu_util_pct) + '%' : '--') : '--'"></span>
+        <span class="mt-2 inline-block text-xs px-2 py-0.5 rounded-full bg-[#C084FC]/15 text-[#C084FC] w-fit"
+              x-text="gpuOnline ? 'Active' : 'Offline'"></span>
+      </div>
+
+      <!-- 4. In-Flight Requests -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4 flex flex-col justify-between">
+        <span class="text-xs uppercase tracking-wider text-slate-500">In-Flight</span>
+        <span class="mt-2 text-3xl font-bold tabular-nums text-neon-blue"
+              x-text="inFlightRequests"></span>
+        <span class="mt-2 inline-block text-xs px-2 py-0.5 rounded-full bg-neon-blue/15 text-neon-blue w-fit"
+              x-text="inFlightRequests > 0 ? 'Busy' : 'Idle'"></span>
+      </div>
+
+      <!-- 5. Output Rate -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4 flex flex-col justify-between">
+        <span class="text-xs uppercase tracking-wider text-slate-500">Output Rate</span>
+        <span class="mt-2 text-3xl font-bold tabular-nums text-[#34D399]"
+              x-text="(lastRequest.output_tps ?? 0).toFixed(1) + ' t/s'"></span>
+        <span class="mt-2 inline-block text-xs px-2 py-0.5 rounded-full bg-[#34D399]/15 text-[#34D399] w-fit"
+              x-text="(lastRequest.output_tps ?? 0) > 0 ? 'Streaming' : 'Idle'"></span>
+      </div>
+
+      <!-- 6. Total Session Tokens (cumulative KPI) -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4 flex flex-col justify-between">
+        <span class="text-xs uppercase tracking-wider text-slate-500">Total Tokens</span>
+        <span class="mt-2 text-xl font-bold tabular-nums text-slate-200 leading-tight">
+          <span x-text="formatNumber(totalSessionInputTokens)"></span>
+          <span class="text-slate-500"> / </span>
+          <span x-text="formatNumber(totalSessionOutputTokens)"></span>
+        </span>
+        <span class="mt-2 inline-block text-xs px-2 py-0.5 rounded-full bg-[#60A5FA]/15 text-[#60A5FA] w-fit"
+              x-text="'In / Out'"></span>
+      </div>
+    </div>
+
+    <!-- ── Metric Chart Grid - 6 charts: 3x line GPU + 1 line rate + 2 bar tokens ── -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <!-- GPU Temperature chart -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="text-sm font-medium text-slate-400">GPU Temperature</h3>
+          <span class="text-lg font-bold tabular-nums text-[#F87171]"
+                x-text="(chartCurrentValues.temp != null ? Math.round(chartCurrentValues.temp) + '°C' : '--')"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chartGpuTemp"></canvas>
+        </div>
+      </div>
+
+      <!-- GPU Power chart -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="text-sm font-medium text-slate-400">GPU Power</h3>
+          <span class="text-lg font-bold tabular-nums text-[#FBBF24]"
+                x-text="(chartCurrentValues.power != null ? Math.round(chartCurrentValues.power) + 'W' : '--')"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chartGpuPower"></canvas>
+        </div>
+      </div>
+
+      <!-- GPU Utilization chart -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="text-sm font-medium text-slate-400">GPU Utilization</h3>
+          <span class="text-lg font-bold tabular-nums text-[#C084FC]"
+                x-text="(chartCurrentValues.util != null ? Math.round(chartCurrentValues.util) + '%' : '--')"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chartGpuUtil"></canvas>
+        </div>
+      </div>
+
+      <!-- Token Output Rate chart -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="text-sm font-medium text-slate-400">Token Output Rate</h3>
+          <span class="text-lg font-bold tabular-nums text-[#34D399]"
+                x-text="(chartCurrentValues.tpsOut != null ? chartCurrentValues.tpsOut.toFixed(1) + ' t/s' : '--')"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chartTokenRate"></canvas>
+        </div>
+      </div>
+
+      <!-- Input Token Consumption bar chart (discrete per-second) -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="text-sm font-medium text-slate-400">Input Tokens (1s)</h3>
+          <span class="text-lg font-bold tabular-nums text-[#22D3EE]"
+                x-text="(chartCurrentValues.consIn != null ? chartCurrentValues.consIn.toLocaleString() : '--')"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chartInputTokens"></canvas>
+        </div>
+      </div>
+
+      <!-- Output Token Consumption bar chart (discrete per-second) -->
+      <div class="rounded-xl border border-[#1e293b] bg-[#121826] p-4">
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="text-sm font-medium text-slate-400">Output Tokens (1s)</h3>
+          <span class="text-lg font-bold tabular-nums text-[#60A5FA]"
+                x-text="(chartCurrentValues.consOut != null ? chartCurrentValues.consOut.toLocaleString() : '--')"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chartOutputTokens"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Recent Requests Log -->
+    <div class="rounded-xl border border-[#1e293b] bg-[#121826] overflow-hidden">
+      <div class="px-4 py-3 border-b border-[#1e293b]">
+        <h3 class="text-sm font-medium text-slate-400">Recent Requests</h3>
+      </div>
+      <div class="max-h-64 overflow-y-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="text-xs uppercase bg-slate-800/50 text-slate-400 sticky top-0">
+            <tr>
+              <th class="px-4 py-2">Time</th>
+              <th class="px-4 py-2">Model</th>
+              <th class="px-4 py-2 text-right">In Tokens</th>
+              <th class="px-4 py-2 text-right">Out Tokens</th>
+              <th class="px-4 py-2 text-right">Total</th>
+              <th class="px-4 py-2 text-right">Out t/s</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#1e293b]/60">
+            <template x-for="(req, idx) in requestLog.slice().reverse()" :key="req._id + '-' + idx">
+              <tr class="hover:bg-slate-800/30 transition-colors">
+                <td class="px-4 py-1.5 text-slate-500 tabular-nums" x-text="formatTime(req.timestamp)"></td>
+                <td class="px-4 py-1.5 font-medium" x-text="req.model"></td>
+                <td class="px-4 py-1.5 text-right tabular-nums" x-text="req.input_tokens"></td>
+                <td class="px-4 py-1.5 text-right tabular-nums text-neon-green" x-text="req.output_tokens"></td>
+                <td class="px-4 py-1.5 text-right tabular-nums" x-text="req.total_tokens"></td>
+                <td class="px-4 py-1.5 text-right tabular-nums" x-text="(req.output_tps ?? 0).toFixed(1)"></td>
+              </tr>
+            </template>
+            <tr x-show="requestLog.length === 0">
+              <td colspan="6" class="px-4 py-8 text-center text-slate-500 text-xs">
+                No requests recorded yet. Send a request through the proxy to see data here.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Footer ──────────────────────────────────────────────────────── -->
+  <footer class="border-t border-[#1e293b] mt-8">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between text-xs text-slate-500">
+      <span>Ollama Usage Proxy Dashboard</span>
+      <span x-text="'ws latency ' + (wsLatency ?? '--') + 'ms'"></span>
+    </div>
+  </footer>
+
+  <!-- ── Application logic ─────────────────────────────────────────── -->
+  <script>
+    // Global Chart.js instances — kept outside Alpine reactivity to prevent Proxy corruption.
+    const charts = {};
+
+    // Auto-increment ID for request dedup tracking
+    let _reqIdCounter = 0;
+
+    function dashboard() {
+      return {
+        // ── Core state ──────────────────────────────────────────────
+        gpuOnline: true,
+        wsStatus: 'connecting',
+        wsLatency: null,
+        status: 'idle',               // "idle" | "thinking" | "generating"
+        inFlightRequests: 0,
+
+        // ── Live GPU readings (from WS payload) ────────────────────
+        current: {
+          gpu_temp_c: null,
+          gpu_power_w: null,
+          gpu_util_pct: null,
+        },
+
+        // ── Session token counters (from backend cumulative) ───────
+        totalSessionInputTokens: 0,
+        totalSessionOutputTokens: 0,
+
+        // ── Request log ────────────────────────────────────────────
+        lastRequest: {},
+        requestLog: [],
+
+        // ── Chart current-value badges ─────────────────────────────
+        chartCurrentValues: {
+          temp: null,
+          power: null,
+          util: null,
+          tpsOut: null,
+          consIn: null,
+          consOut: null,
+        },
+
+        // ── WebSocket ──────────────────────────────────────────────
+        ws: null,
+        reconnectDelay: 1500,
+
+        // ── Seen request timestamps (dedup set) ────────────────────
+        _seenRequests: new Set(),
+
+        // ── Computed: status badge CSS class ───────────────────────
+        get statusBadgeClass() {
+          switch (this.status) {
+            case 'thinking': return 'badge-thinking';
+            case 'generating': return 'badge-generating';
+            default: return 'badge-idle';
+          }
+        },
+
+        // ── Computed: status badge label ───────────────────────────
+        get statusLabel() {
+          switch (this.status) {
+            case 'thinking': return 'Thinking...';
+            case 'generating': return 'Generating...';
+            default: return 'Idle';
+          }
+        },
+
+        // ── Init ───────────────────────────────────────────────────
+        init() {
+          this.connectWS();
+          this.$nextTick(() => {
+            this._ensureCharts();
+          });
+        },
+
+        // ── WebSocket connection ───────────────────────────────────
+        connectWS() {
+          const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+          const wsUrl = `${proto}://${location.host}/api/ws/telemetry`;
+          this.ws = new WebSocket(wsUrl);
+
+          let wsT0 = 0;
+          this.ws.onopen = () => {
+            this.wsStatus = 'connected';
+            this.reconnectDelay = 1500;
+            wsT0 = performance.now();
+            this.ws.send('ping');
+          };
+
+          this.ws.onmessage = (evt) => {
+            if (this.wsLatency === null && wsT0 > 0) {
+              this.wsLatency = Math.round(performance.now() - wsT0);
+            }
+            const msg = JSON.parse(evt.data);
+            if (msg.type === 'metrics') {
+              this.handleMetricsSnapshot(msg);
+            } else if (msg.type === 'request') {
+              this.handleRequest(msg);
+            }
+          };
+
+          this.ws.onclose = () => {
+            this.wsStatus = 'disconnected';
+            setTimeout(() => this.connectWS(), this.reconnectDelay);
+            this.reconnectDelay = Math.min(this.reconnectDelay * 2, 15000);
+          };
+
+          this.ws.onerror = () => {
+            this.wsStatus = 'error';
+          };
+        },
+
+        // ── Handle full 60-slot metrics snapshot (1Hz) ─────────────
+        // ALL chart data is overwritten via .map() from the authoritative
+        // backend snapshot. No .push(), .shift(), or .slice() mutations.
+        handleMetricsSnapshot(msg) {
+          const snapshot = msg.snapshot;
+          if (!snapshot || !Array.isArray(snapshot) || snapshot.length === 0) return;
+
+          // ── Status badge fields ────────────────────────────────
+          this.status = msg.status || 'idle';
+          this.inFlightRequests = msg.in_flight_requests ?? 0;
+
+          // ── Session cumulative token counters ──────────────────
+          this.totalSessionInputTokens = msg.total_session_input_tokens ?? 0;
+          this.totalSessionOutputTokens = msg.total_session_output_tokens ?? 0;
+
+          // ── GPU online + live readings ─────────────────────────
+          this.gpuOnline = msg.gpu_online !== false;
+
+          const liveTemp = msg.gpu_temp_c != null ? Number(msg.gpu_temp_c) : null;
+          const livePower = msg.gpu_power_w != null ? Number(msg.gpu_power_w) : null;
+          const liveUtil = msg.gpu_util_pct != null ? Number(msg.gpu_util_pct) : null;
+
+          this.current.gpu_temp_c = liveTemp;
+          this.current.gpu_power_w = livePower;
+          this.current.gpu_util_pct = liveUtil;
+
+          // ── Build time labels from backend integer Unix seconds ─
+          const labels = snapshot.map(s =>
+            new Date(s.timestamp * 1000).toLocaleTimeString()
+          );
+
+          // ── GPU charts — .map() overwrite ──────────────────────
+          if (charts.temp) {
+            charts.temp.data.labels = labels;
+            charts.temp.data.datasets[0].data = snapshot.map(s => s.gpu_temp_c ?? null);
+            this._updateGradient(charts.temp);
+            charts.temp.update('none');
+          }
+
+          if (charts.power) {
+            charts.power.data.labels = labels;
+            charts.power.data.datasets[0].data = snapshot.map(s => s.gpu_power_w ?? null);
+            this._updateGradient(charts.power);
+            charts.power.update('none');
+          }
+
+          if (charts.util) {
+            charts.util.data.labels = labels;
+            charts.util.data.datasets[0].data = snapshot.map(s => s.gpu_util_pct ?? null);
+            this._updateGradient(charts.util);
+            charts.util.update('none');
+          }
+
+          // ── Token rate chart — discrete output_tokens per slot ─
+          if (charts.tokenRate) {
+            charts.tokenRate.data.labels = labels;
+            charts.tokenRate.data.datasets[0].data = snapshot.map(s => s.output_tokens);
+            this._updateGradient(charts.tokenRate);
+            charts.tokenRate.update('none');
+          }
+
+          // ── Token activity bars — discrete input/output tokens ─
+          if (charts.inputTokens) {
+            charts.inputTokens.data.labels = labels;
+            charts.inputTokens.data.datasets[0].data = snapshot.map(s => s.input_tokens);
+            charts.inputTokens.update('none');
+          }
+
+          if (charts.outputTokens) {
+            charts.outputTokens.data.labels = labels;
+            charts.outputTokens.data.datasets[0].data = snapshot.map(s => s.output_tokens);
+            charts.outputTokens.update('none');
+          }
+
+          // ── Chart current-value badges (last slot) ──────────────
+          const last = snapshot[snapshot.length - 1];
+          this.chartCurrentValues.temp = liveTemp ?? last.gpu_temp_c;
+          this.chartCurrentValues.power = livePower ?? last.gpu_power_w;
+          this.chartCurrentValues.util = liveUtil ?? last.gpu_util_pct;
+          this.chartCurrentValues.tpsOut = last.output_tokens || 0;
+          this.chartCurrentValues.consIn = last.input_tokens || 0;
+          this.chartCurrentValues.consOut = last.output_tokens || 0;
+        },
+
+        // ── Handle request completion message ──────────────────────
+        handleRequest(msg) {
+          msg._id = msg._id || ++_reqIdCounter;
+
+          const dedupKey = `${msg.timestamp}-${msg.model}-${msg.input_tokens}-${msg.output_tokens}`;
+          if (this._seenRequests.has(dedupKey)) return;
+          this._seenRequests.add(dedupKey);
+
+          const maxSeen = 500;
+          if (this._seenRequests.size > maxSeen) {
+            const first = this._seenRequests.values().next().value;
+            this._seenRequests.delete(first);
+          }
+
+          this.requestLog.push(msg);
+          if (this.requestLog.length > 100) this.requestLog.shift();
+
+          this.lastRequest = msg;
+        },
+
+        // ── Hex to RGBA helper ─────────────────────────────────────
+        _hexToRgba(hex, alpha) {
+          const r = parseInt(hex.slice(1, 3), 16);
+          const g = parseInt(hex.slice(3, 5), 16);
+          const b = parseInt(hex.slice(5, 7), 16);
+          return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        },
+
+        // ── Shared chart options (no animation) ────────────────────
+        _lineChartOptions() {
+          return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { display: false, bounds: 'ticks', ticks: { maxTicksLimit: 6, autoSkip: true } },
+              y: {
+                beginAtZero: true,
+                grid: { color: '#1e293b' },
+                border: { display: false },
+                ticks: { color: '#64748b', font: { size: 11 } },
+              },
+            },
+          };
+        },
+
+        // ── Create gradient for a chart canvas ─────────────────────
+        _createGradient(canvasId, color) {
+          const canvas = document.getElementById(canvasId);
+          if (!canvas) return null;
+          const ctx = canvas.getContext('2d');
+          const height = canvas.getBoundingClientRect().height || 200;
+          const gradient = ctx.createLinearGradient(0, 0, 0, height);
+          gradient.addColorStop(0, this._hexToRgba(color, 0.25));
+          gradient.addColorStop(1, this._hexToRgba(color, 0.0));
+          return gradient;
+        },
+
+        // ── Create a line chart instance ───────────────────────────
+        _createLineChart(canvasId, color) {
+          const canvas = document.getElementById(canvasId);
+          if (!canvas) return null;
+
+          const ctx = canvas.getContext('2d');
+          const gradient = this._createGradient(canvasId, color);
+
+          return new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: [],
+              datasets: [{
+                label: 'Metric',
+                data: [],
+                borderColor: color,
+                backgroundColor: gradient,
+                borderWidth: 2,
+                fill: true,
+                tension: 0.35,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                pointHoverBackgroundColor: color,
+              }]
+            },
+            options: { ...this._lineChartOptions() },
+          });
+        },
+
+        // ── Create a bar chart instance ────────────────────────────
+        _createBarChart(canvasId, bgColor) {
+          const canvas = document.getElementById(canvasId);
+          if (!canvas) return null;
+
+          const ctx = canvas.getContext('2d');
+
+          return new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: [],
+              datasets: [{
+                label: 'Tokens',
+                data: [],
+                backgroundColor: bgColor,
+                borderRadius: 4,
+                borderSkipped: false,
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              animation: false,
+              interaction: { mode: 'index', intersect: false },
+              scales: {
+                x: { display: false },
+                y: {
+                  beginAtZero: true,
+                  grid: { color: '#1e293b' },
+                  border: { display: false },
+                  ticks: { color: '#64748b', font: { size: 11 } },
+                },
+              },
+              plugins: { legend: { display: false } },
+            },
+          });
+        },
+
+        // ── Recreate gradient for a line chart ─────────────────────
+        _updateGradient(chart) {
+          const canvas = chart.canvas;
+          const height = canvas.getBoundingClientRect().height || 200;
+          const color = chart.data.datasets[0].borderColor || '#ffffff';
+          const gradient = canvas.getContext('2d').createLinearGradient(0, 0, 0, height);
+          gradient.addColorStop(0, this._hexToRgba(color, 0.25));
+          gradient.addColorStop(1, this._hexToRgba(color, 0.0));
+          chart.data.datasets[0].backgroundColor = gradient;
+        },
+
+        // ── Lazy chart creation ────────────────────────────────────
+        _ensureCharts() {
+          if (typeof Chart === 'undefined') return;
+
+          if (!charts.temp && document.getElementById('chartGpuTemp')) {
+            charts.temp = this._createLineChart('chartGpuTemp', '#F87171');
+          }
+          if (!charts.power && document.getElementById('chartGpuPower')) {
+            charts.power = this._createLineChart('chartGpuPower', '#FBBF24');
+          }
+          if (!charts.util && document.getElementById('chartGpuUtil')) {
+            charts.util = this._createLineChart('chartGpuUtil', '#C084FC');
+          }
+          if (!charts.tokenRate && document.getElementById('chartTokenRate')) {
+            charts.tokenRate = this._createLineChart('chartTokenRate', '#34D399');
+          }
+          if (!charts.inputTokens && document.getElementById('chartInputTokens')) {
+            charts.inputTokens = this._createBarChart('chartInputTokens', '#22D3EE');
+          }
+          if (!charts.outputTokens && document.getElementById('chartOutputTokens')) {
+            charts.outputTokens = this._createBarChart('chartOutputTokens', '#60A5FA');
+          }
+        },
+
+        // ── Formatting helpers ─────────────────────────────────────
+        formatNumber(n) {
+          return (n || 0).toLocaleString();
+        },
+
+        formatTime(iso) {
+          return new Date(iso).toLocaleTimeString();
+        },
+      };
+    }
+  </script>
+</body>
+</html>

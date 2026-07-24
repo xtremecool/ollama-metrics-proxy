@@ -33,10 +33,55 @@ Your AI client connects to the proxy on **port 11435** instead of Ollama directl
 
 | Feature | Description |
 |---|---|
+| **Real-Time Dashboard** | Built-in web dashboard with live GPU telemetry (temperature, power, utilization) and token throughput charts over WebSocket. |
+| **In-Flight Status Tracking** | Live status badge shows whether the proxy is idle, thinking (model load/prompt eval), or generating (streaming tokens). |
+| **Session Token KPIs** | Dedicated counter cards display cumulative input/output tokens for the current session. |
 | **Zero-Latency Stream Passthrough** | Responses stream in real-time with no buffering. The proxy adds negligible overhead by processing metrics from the final response chunk. |
 | **Cost Comparison Analytics** | Estimate what your local token usage would cost if routed through paid providers like Claude, GPT-4, or Gemini—using fully configurable pricing. |
 | **Token Processing Speed Graphs** | Visualize input/output token rates over time with weighted-average calculations that reflect true processing performance. |
 | **Privacy-First Architecture** | Only metadata is stored. Prompts, responses, file content, and system instructions are never captured or logged. |
+
+---
+
+## Real-Time Dashboard
+
+Starting in **v0.4.0**, the proxy includes a built-in single-page dashboard accessible at `http://localhost:11435/dashboard` (or the root URL). No extra installation is required.
+
+### What You'll See
+
+| Panel | Metrics |
+|---|---|
+| **Status Badge** | Real-time proxy state: idle (gray), thinking (pulsing yellow), generating (pulsing green) |
+| **GPU KPI Cards** | Live temperature (°C), power draw (W), and core utilization (%) |
+| **In-Flight KPI** | Number of active requests currently being proxied |
+| **Total Tokens KPI** | Cumulative session input/output token counts |
+| **GPU Temperature Chart** | Live smooth line chart with gradient fill (soft rose) |
+| **GPU Power Chart** | Live smooth line chart with gradient fill (soft amber) |
+| **GPU Utilization Chart** | Live smooth line chart with gradient fill (soft purple) |
+| **Token Output Rate** | Tokens/second as a smooth line chart (soft emerald) |
+| **Input Token Activity** | Discrete per-second input token counts (soft cyan bar chart) |
+| **Output Token Activity** | Discrete per-second output token counts (soft blue bar chart) |
+| **Request Log** | Scrollable table of recent proxy requests with model, tokens, and rates |
+
+### GPU Telemetry Requirements
+
+Live GPU metrics require:
+
+* **Linux** host (detected at runtime)
+* **NVIDIA** GPU with NVML drivers installed
+* **nvidia-ml-py** Python package (official NVIDIA bindings, included as a dependency)
+
+On non-Linux hosts or when no NVIDIA device is detected, the dashboard displays a **"System Stats Offline"** banner and gracefully omits the GPU charts. Token charts and request logs continue to work normally.
+
+### How It Works
+
+1. A background task polls GPU hardware every second via `nvidia-ml-py`
+2. Readings are persisted to SQLite (`system_metrics` table)
+3. A WebSocket feed at `/api/ws` pushes JSON frames to all connected browser tabs
+4. The dashboard uses **Alpine.js** + **Chart.js** (loaded from CDN) for reactive UI and performant live-scrolling charts
+5. On page load, `/api/history` seeds the charts with stored data so you never see blank graphs
+
+> **No Node.js or build step required.** The dashboard is a self-contained HTML file served directly by the proxy, making it compatible with PyInstaller single-binary distributions.
 
 ---
 
@@ -261,8 +306,10 @@ The SQLite database resides entirely on your local filesystem at `~/.local/share
 ```bash
 # Verify proxy health endpoint
 curl http://localhost:11435/health
-# Expected: {"status": "ok", "proxy": true}
+# Expected: {"status": "ok", "proxy": true, "gpu_online": true}
 ```
+
+The `gpu_online` field indicates whether the NVIDIA telemetry module initialised successfully. A value of `false` is normal on non-Linux hosts or when no NVIDIA GPU is present—the dashboard will still work but GPU charts will show an offline placeholder.
 
 Ensure Ollama is running on port 11434 and the proxy is listening on 11435. Check proxy logs for connection errors.
 
@@ -271,6 +318,15 @@ Ensure Ollama is running on port 11434 and the proxy is listening on 11435. Chec
 1. Confirm your client points to the proxy (`:11435`), not Ollama directly (`:11434`)
 2. Verify the database path matches the proxy configuration (default: `~/.local/share/ollama-usage-proxy/usage.db`)
 3. Check the proxy log output for evidence of processed requests
+
+### Dashboard shows "System Stats Offline"
+
+This is expected when:
+* Running on macOS or Windows (GPU telemetry is Linux-only)
+* No NVIDIA GPU is detected
+* `nvidia-ml-py` cannot initialise (missing NVML drivers)
+
+Token charts and the request log still work in this mode. To enable GPU metrics, run on a Linux host with an NVIDIA GPU and ensure the `nvidia-ml-dev` (or equivalent) packages are installed.
 
 ### Streaming feels slow
 

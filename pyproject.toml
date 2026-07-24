@@ -1,6 +1,6 @@
 [project]
 name = "ollama-usage-proxy"
-version = "0.3.4"
+version = "0.19.0"
 description = "A local HTTP proxy for tracking Ollama model usage metrics"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.27.0",
     "pandas>=2.2.0",
     "matplotlib>=3.8.0",
+    "nvidia-ml-py>=12.535.133",
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 
@@ -40,7 +41,18 @@ where = ["src"]
 include = ["ollama_usage_proxy*"]
 
 [tool.setuptools.package-data]
-"ollama_usage_proxy" = ["*.toml"]
+"ollama_usage_proxy" = ["*.toml", "static/**/*"]
+
+[tool.pytest.ini_options]
+addopts = ["--browser=chromium"]
+
+[tool.pytest_playwright]
+browser = "chromium"
+launch_args = [
+    "--disable-web-security",
+    "--disable-site-isolation-trials",
+    "--no-sandbox",
+]
 
 [tool.ruff]
 line-length = 120

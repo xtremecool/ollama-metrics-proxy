@@ -5,4 +5,4 @@ from importlib.metadata import PackageNotFoundError, version as _metadata_versio
 try:
     __version__ = _metadata_version("ollama-usage-proxy")
 except PackageNotFoundError:
-    __version__ = "0.3.4"
+    __version__ = "0.0.0+dev"  # only when not installed (e.g., running from src/ directly)
