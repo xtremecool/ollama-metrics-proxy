@@ -63,6 +63,26 @@ Starting in **v0.4.0**, the proxy includes a built-in single-page dashboard acce
 | **Output Token Activity** | Discrete per-second output token counts (soft blue bar chart) |
 | **Request Log** | Scrollable table of recent proxy requests with model, tokens, and rates |
 
+### Screenshots
+
+#### Idle — No Active Requests
+
+The dashboard displays an **idle** status when no LLM requests are being proxied. GPU metrics reflect baseline hardware state (fan idle, low power draw). Token charts remain flat until a request arrives.
+
+![Dashboard - Idle](images/Ollama%20Usage%20Proxy%20%E2%80%94%20Dashboard%20-%20idle.png)
+
+#### Thinking — Model Load & Prompt Evaluation
+
+The **thinking** status appears when the proxy is forwarding a request but the model is still loading into memory or evaluating the prompt (before token generation begins). GPU utilization and power typically spike during this phase as the model processes the full context window. This state is common with large models that aren't already cached in VRAM.
+
+![Dashboard - Thinking](images/Ollama%20Usage%20Proxy%20%E2%80%94%20Dashboard%20-%20thinking.png)
+
+#### Generating — Streaming Output Tokens
+
+The **generating** status indicates the model is actively producing and streaming output tokens back to the client. This is where token output rate charts come alive, showing real-time throughput. GPU power and utilization remain elevated while tokens are being generated.
+
+![Dashboard - Generating](images/Ollama%20Usage%20Proxy%20%E2%80%94%20Dashboard%20-%20generating.png)
+
 ### GPU Telemetry Requirements
 
 Live GPU metrics require:
