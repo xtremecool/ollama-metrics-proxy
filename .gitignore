@@ -44,11 +44,6 @@ prices.toml
 *.db-wal
 *.sqlite
 *.sqlite3
-data/*.db
-
-# Generated reports (ignores all generated contents but keeps the directory in git)
-reports/*
-!reports/.gitkeep
 
 # OS files
 .DS_Store

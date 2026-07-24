@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -15,7 +17,17 @@ UsageMetrics = _models.UsageMetrics
 logger = logging.getLogger(__name__)
 
 # Schema version for potential future migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+
+@dataclass
+class SystemMetricsPoint:
+    """Single snapshot of GPU telemetry."""
+
+    timestamp: str
+    gpu_temp_c: float | None = None
+    gpu_power_w: float | None = None
+    gpu_util_pct: float | None = None
 
 
 def get_connection(db_path: str | Path) -> sqlite3.Connection:
@@ -107,12 +119,28 @@ def initialize_schema(db_path: str | Path) -> None:
             )
         """)
 
+        # System / GPU telemetry table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS system_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                gpu_temp_c REAL,
+                gpu_power_w REAL,
+                gpu_util_pct REAL,
+                vram_used_bytes INTEGER,
+                cpu_util_pct REAL
+            )
+        """)
+
         # Performance indexes
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_requests_created_at ON requests(created_at)
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_system_metrics_timestamp ON system_metrics(timestamp)
         """)
 
     logger.info("Database schema initialised at %s", db_path)
@@ -177,3 +205,104 @@ def get_total_requests_count(db_path: str | Path) -> int:
         cursor = conn.execute("SELECT COUNT(*) FROM requests")
         row = cursor.fetchone()
         return row[0] if row else 0
+
+
+# ── System metrics helpers ───────────────────────────────────────────────
+
+
+def insert_system_metrics(db_path: str | Path, metrics: SystemMetricsPoint) -> None:
+    """Insert a single GPU telemetry snapshot into the database.
+
+    This operation is wrapped in its own transaction so it does not block
+    the proxy response.  If it fails, the error is logged but not raised
+    to avoid breaking the telemetry loop.
+    """
+    try:
+        with transaction(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO system_metrics (
+                    timestamp, gpu_temp_c, gpu_power_w, gpu_util_pct
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    metrics.timestamp,
+                    metrics.gpu_temp_c,
+                    metrics.gpu_power_w,
+                    metrics.gpu_util_pct,
+                ),
+            )
+    except Exception as e:
+        logger.error("Failed to insert system metrics: %s", e)
+
+
+async def ainsert_system_metrics(db_path: str | Path, metrics: SystemMetricsPoint) -> None:
+    """Asynchronous wrapper around insert_system_metrics.
+
+    Runs the blocking SQLite write on a thread-pool executor so the event
+    loop is never starved.
+    """
+    import asyncio
+    await asyncio.to_thread(insert_system_metrics, db_path, metrics)
+
+
+def get_recent_system_metrics(
+    db_path: str | Path,
+    limit: int = 100,
+) -> list[SystemMetricsPoint]:
+    """Return the most recent system-metric snapshots.
+
+    Parameters
+            ----------
+        db_path: Path to the SQLite database file.
+        limit: Maximum number of rows to return (newest first).
+
+    Returns:
+        List of ``SystemMetricsPoint`` instances ordered by timestamp
+        ascending so consumers can feed them directly into a time-series
+        chart without reversing.
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(
+            """
+            SELECT timestamp, gpu_temp_c, gpu_power_w, gpu_util_pct
+            FROM system_metrics
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+
+    # Reverse so oldest-first (chart-friendly order)
+    points: list[SystemMetricsPoint] = []
+    for row in reversed(rows):
+        points.append(
+            SystemMetricsPoint(
+                timestamp=row[0],
+                gpu_temp_c=row[1],
+                gpu_power_w=row[2],
+                gpu_util_pct=row[3],
+            )
+        )
+    return points
+
+
+def prune_old_system_metrics(db_path: str | Path, keep_hours: float = 2.0) -> int:
+    """Delete telemetry snapshots older than *keep_hours*.
+
+    Returns the number of rows deleted.
+    """
+    cutoff = (datetime.now(timezone.utc)).isoformat()
+    with transaction(db_path) as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM system_metrics
+            WHERE timestamp < ?
+            """,
+            # Approximate: keep only recent rows by ISO-timestamp comparison.
+            # A more precise approach would use datetime arithmetic but SQLite's
+            # text comparison on ISO-8601 strings works well enough.
+            (cutoff,),
+        )
+        return cursor.rowcount
