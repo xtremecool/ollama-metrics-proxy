@@ -10,9 +10,11 @@ Covers:
 """
 
 import asyncio
+import re
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -292,8 +294,15 @@ class TestFrontendHtmlStructure:
     def test_dashboard_has_chartjs_script_tag(self, client):
         """Dashboard should load Chart.js from CDN."""
         content = client.get("/dashboard").text
-        assert "chart.js" in content.lower() and "cdn.jsdelivr.net" in content, \
-            "Should load Chart.js library from CDN"
+        script_srcs = re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', content, flags=re.IGNORECASE)
+
+        has_chartjs_from_jsdelivr = any(
+            (parsed.hostname or "").lower() == "cdn.jsdelivr.net"
+            and "chart.js" in parsed.path.lower()
+            for parsed in (urlparse(src) for src in script_srcs)
+        )
+
+        assert has_chartjs_from_jsdelivr, "Should load Chart.js library from CDN"
 
     def test_dashboard_pastel_colors(self, client):
         """Charts should use pastel color scheme as specified in plan."""
